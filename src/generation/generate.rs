@@ -581,6 +581,33 @@ fn gen_text_decoration(text: &TextDecoration, context: &mut Context) -> PrintIte
 }
 
 fn gen_html(node: &Html, ctx: &mut Context) -> PrintItems {
+  let range = node.range.clone();
+  let text = &ctx.file_text[range.clone()];
+  // Trim trailing newlines/spaces
+  let trimmed = text.trim_end();
+  // Lowercase copy for tag detection
+  let lower = trimmed.to_lowercase();
+  // If this is a <style> or <script> block, delegate to the Vue formatter
+  let is_style = lower.trim_start().starts_with("<style") && lower.contains("</style>");
+  let is_script = lower.trim_start().starts_with("<script") && lower.contains("</script>");
+  if is_style || is_script {
+    // Send full block (tags + content) to the 'vue' formatter
+    match ctx.format_text("vue", trimmed) {
+      Ok(Some(mut formatted)) => {
+        // Remove trailing newlines added by the formatter
+        while formatted.ends_with('\n') {
+          formatted.pop();
+        }
+        let mut items = PrintItems::new();
+        items.push_sc(sc!(""));
+        items.extend(gen_from_string(&formatted));
+        return items;
+      }
+      _ => {
+        // Fall back to raw output below
+      }
+    }
+  }
   gen_range(node.range.clone(), ctx)
 }
 
