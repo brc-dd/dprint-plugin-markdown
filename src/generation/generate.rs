@@ -583,79 +583,45 @@ fn gen_text_decoration(text: &TextDecoration, context: &mut Context) -> PrintIte
 fn gen_html(node: &Html, ctx: &mut Context) -> PrintItems {
   let range = node.range.clone();
   let text = &ctx.file_text[range.clone()];
-  // Trim trailing newlines/spaces
+
   let trimmed = text.trim_end();
-  // Lowercase copy for tag detection
   let lower = trimmed.to_lowercase();
-  // If this is a <style> or <script> block, delegate to the Vue formatter
-  let is_style = lower.trim_start().starts_with("<style") && lower.contains("</style>");
-  let is_script = lower.trim_start().starts_with("<script") && lower.contains("</script>");
+  let trimmed_start = lower.trim_start();
+
+  let is_style = trimmed_start.starts_with("<style") && lower.contains("</style>");
+  let is_script = trimmed_start.starts_with("<script") && lower.contains("</script>");
+
   if is_style || is_script {
-    // Send full block (tags + content) to the 'vue' formatter
-    match ctx.format_text("vue", trimmed) {
-      Ok(Some(mut formatted)) => {
-        // Remove trailing newlines added by the formatter
-        while formatted.ends_with('\n') {
-          formatted.pop();
-        }
-        let mut items = PrintItems::new();
-        items.push_sc(sc!(""));
-        items.extend(gen_from_string(&formatted));
-        return items;
-      }
-      _ => {
-        // Fall back to raw output below
-      }
+    if let Ok(Some(formatted)) = ctx.format_text("vue", trimmed) {
+      let formatted = formatted.trim_end_matches(['\n', '\r']);
+
+      let mut items = PrintItems::new();
+      items.push_sc(sc!(""));
+      items.extend(gen_from_string(&formatted));
+      return items;
     }
-  }
-  // Other HTML blocks: wrap in <template> to let Vue formatter handle full markup
-  if lower.trim_start().starts_with('<') {
+  } else if trimmed_start.starts_with('<') {
     const WRAP_OPEN: &str = "<template>";
     const WRAP_CLOSE: &str = "</template>";
-    let wrapped = format!("{}{}{}", WRAP_OPEN, trimmed, WRAP_CLOSE);
+    let wrapped = format!("{WRAP_OPEN}{trimmed}{WRAP_CLOSE}");
+
     if let Ok(Some(formatted_wrapped)) = ctx.format_text("vue", &wrapped) {
-      // Unwrap the template tags
-      if let Some(open_idx) = formatted_wrapped.find(WRAP_OPEN) {
-        let content_start = open_idx + WRAP_OPEN.len();
-        if let Some(close_idx) = formatted_wrapped.rfind(WRAP_CLOSE) {
-          let mut inner = &formatted_wrapped[content_start..close_idx];
-          // Remove leading newline
-          if inner.starts_with('\n') {
-            inner = &inner[1..];
-          }
-          // Remove trailing newlines
-          let mut inner_owned = inner.to_string();
-          while inner_owned.ends_with('\n') {
-            inner_owned.pop();
-          }
-          // De-indent based on indent of the first line
-          let dedented = {
-            let indent_count = inner_owned.chars().take_while(|c| c.is_whitespace()).count();
-            if indent_count > 0 {
-              inner_owned
-                .lines()
-                .map(|l| {
-                  if l.len() > indent_count {
-                    &l[indent_count..]
-                  } else {
-                    l.trim_start()
-                  }
-                })
-                .collect::<Vec<&str>>()
-                .join("\n")
-            } else {
-              inner_owned.clone()
-            }
-          };
-          let mut items = PrintItems::new();
-          items.push_sc(sc!(""));
-          items.extend(gen_from_string(&dedented));
-          return items;
-        }
+      if let (Some(open_idx), Some(close_idx)) =
+        (formatted_wrapped.find(WRAP_OPEN), formatted_wrapped.rfind(WRAP_CLOSE))
+      {
+        let inner = &formatted_wrapped[(open_idx + WRAP_OPEN.len())..close_idx];
+        let inner = inner.strip_prefix(['\n', '\r']).unwrap_or(inner);
+        let dedented = utils::unindent(inner.trim_end());
+
+        let mut items = PrintItems::new();
+        items.push_sc(sc!(""));
+        items.extend(gen_from_string(&dedented));
+        return items;
       }
     }
   }
-  gen_range(node.range.clone(), ctx)
+
+  gen_range(range, ctx)
 }
 
 fn gen_display_math(node: &DisplayMath, ctx: &mut Context) -> PrintItems {
