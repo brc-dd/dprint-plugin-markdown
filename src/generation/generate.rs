@@ -608,6 +608,53 @@ fn gen_html(node: &Html, ctx: &mut Context) -> PrintItems {
       }
     }
   }
+  // Other HTML blocks: wrap in <template> to let Vue formatter handle full markup
+  if lower.trim_start().starts_with('<') {
+    const WRAP_OPEN: &str = "<template>";
+    const WRAP_CLOSE: &str = "</template>";
+    let wrapped = format!("{}{}{}", WRAP_OPEN, trimmed, WRAP_CLOSE);
+    if let Ok(Some(formatted_wrapped)) = ctx.format_text("vue", &wrapped) {
+      // Unwrap the template tags
+      if let Some(open_idx) = formatted_wrapped.find(WRAP_OPEN) {
+        let content_start = open_idx + WRAP_OPEN.len();
+        if let Some(close_idx) = formatted_wrapped.rfind(WRAP_CLOSE) {
+          let mut inner = &formatted_wrapped[content_start..close_idx];
+          // Remove leading newline
+          if inner.starts_with('\n') {
+            inner = &inner[1..];
+          }
+          // Remove trailing newlines
+          let mut inner_owned = inner.to_string();
+          while inner_owned.ends_with('\n') {
+            inner_owned.pop();
+          }
+          // De-indent based on indent of the first line
+          let dedented = {
+            let indent_count = inner_owned.chars().take_while(|c| c.is_whitespace()).count();
+            if indent_count > 0 {
+              inner_owned
+                .lines()
+                .map(|l| {
+                  if l.len() > indent_count {
+                    &l[indent_count..]
+                  } else {
+                    l.trim_start()
+                  }
+                })
+                .collect::<Vec<&str>>()
+                .join("\n")
+            } else {
+              inner_owned.clone()
+            }
+          };
+          let mut items = PrintItems::new();
+          items.push_sc(sc!(""));
+          items.extend(gen_from_string(&dedented));
+          return items;
+        }
+      }
+    }
+  }
   gen_range(node.range.clone(), ctx)
 }
 
